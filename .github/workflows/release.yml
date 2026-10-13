@@ -77,19 +77,10 @@ jobs:
             libasound2-dev libxdo-dev libclang-dev cmake \
             libgtk-layer-shell-dev libvulkan-dev
 
-      # Headers and the shader compiler whisper.cpp needs for its Vulkan
-      # backend. Sets VULKAN_SDK for the build.
-      - name: Vulkan SDK (Linux)
-        if: runner.os == 'Linux'
-        uses: humbletim/setup-vulkan-sdk@v1.2.1
-        with:
-          vulkan-query-version: latest
-          vulkan-components: Vulkan-Headers, Vulkan-Loader, SPIRV-Tools, glslc
-          vulkan-use-cache: true
-
-      # The official SDK ships glslc on Windows; the action above builds from source there and has no glslc.
-      - name: Vulkan SDK (Windows)
-        if: runner.os == 'Windows'
+      # Official Vulkan SDK, which includes glslc (whisper.cpp needs it for Vulkan). Sets VULKAN_SDK.
+      # The setup-vulkan-sdk action builds from source and no longer provides glslc.
+      - name: Vulkan SDK
+        if: runner.os != 'macOS'
         uses: jakoch/install-vulkan-sdk-action@v1.2.5
         with:
           vulkan_version: 1.4.309.0
