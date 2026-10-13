@@ -40,9 +40,36 @@ pub struct Settings {
     /// ISO-639-1 code such as `en` or `de`; empty means auto-detect.
     pub language: String,
     pub vocabulary: Vec<Term>,
+    /// Run local transcription on the GPU when the build supports it
+    /// (Metal, Vulkan, CUDA or HIP). Falls back to the CPU otherwise.
+    pub use_gpu: bool,
+    /// Cut silence from the start and end of a recording before transcribing.
+    pub trim_silence: bool,
+    /// Understand spoken commands such as "new line", "comma" or "delete that".
+    pub voice_commands: bool,
+    /// Transcribe finished parts of a recording while it is still running
+    /// (local backend only), so little is left to do when the key is released.
+    pub streaming: bool,
+    /// The user's typing speed in words per minute, for the time-saved figure.
+    pub typing_wpm: u32,
+    /// Transcribe every recording with both the local model and the OpenAI
+    /// API, and show time and text side by side. Needs both to be set up.
+    pub compare_mode: bool,
+    /// Name of the microphone to record from; empty means the system default.
+    pub input_device: String,
+    /// Flash attention on the GPU. Set by the speed test.
+    pub flash_attn: bool,
+    /// Decoding width: 1 is greedy, higher is beam search. 0 picks a default
+    /// for this build. Set by the speed test.
+    pub beam_size: u32,
+    /// CPU threads for local transcription; 0 picks a default.
+    pub threads: u32,
     pub hotkeys: Hotkeys,
     /// Paste into the focused app after transcribing (desktop only).
     pub auto_paste: bool,
+    /// Where the recording pill appears: `top`, `bottom`, or a corner such as
+    /// `top-left` / `bottom-right` (desktop only).
+    pub overlay_position: String,
 }
 
 impl Default for Settings {
@@ -54,8 +81,19 @@ impl Default for Settings {
             model: "whisper-1".into(),
             language: String::new(),
             vocabulary: Vec::new(),
+            use_gpu: true,
+            trim_silence: true,
+            voice_commands: true,
+            streaming: true,
+            typing_wpm: 40,
+            compare_mode: false,
+            input_device: String::new(),
+            flash_attn: true,
+            beam_size: 0,
+            threads: 0,
             hotkeys: Hotkeys::default(),
             auto_paste: true,
+            overlay_position: "top".into(),
         }
     }
 }

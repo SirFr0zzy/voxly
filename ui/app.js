@@ -103,6 +103,15 @@ function renderUsage() {
   $('st-avg').textContent = fmt(active ? Math.round(total / active) : 0);
   $('st-wpm').textContent = fmt(secs >= 10 ? Math.round(total / (secs / 60)) : 0);
 
+  // Time and money saved.
+  const wpm = Math.max(5, Number($('typing-wpm').value) || 40);
+  const typing = (total / wpm) * 60;
+  const dur = (sec) => (sec >= 3600 ? `${(sec / 3600).toFixed(1)} h` : `${Math.round(sec / 60)} min`);
+  $('st-typing').textContent = dur(typing);
+  $('st-saved').textContent = dur(Math.max(0, typing - secs));
+  const perMin = ($('model').value || '').includes('mini') ? 0.003 : 0.006;
+  $('st-cloud').textContent = `$${((secs / 60) * perMin).toFixed(2)}`;
+
   // Heatmap: columns are weeks (Monday first), rows are weekdays.
   const dow = (today.getDay() + 6) % 7; // Monday = 0
   const start = at(dow + (WEEKS - 1) * 7);
@@ -158,10 +167,17 @@ function setStatus(s) {
   $('rec-label').textContent = labels[s];
   $('status').textContent = { idle: 'Idle', recording: 'Recording…', transcribing: 'Transcribing…' }[s];
   if (s !== 'idle') $('error').hidden = true;
+  if (s === 'recording') $('notice').hidden = true;
 }
 $('rec').onclick = () => invoke('toggle');
 $('paste-last').onclick = () => invoke('paste_last_cmd');
 listen('status', (e) => setStatus(e.payload));
+listen('notice', (e) => { $('notice').textContent = e.payload; $('notice').hidden = false; });
+listen('timing', (e) => {
+  const { ms, audio_s, backend } = e.payload;
+  $('timing').textContent = `Transcribed ${audio_s} s of audio in ${(ms / 1000).toFixed(2)} s (${backend})`;
+  $('timing').hidden = false;
+});
 listen('transcript', (e) => { $('last').value = e.payload; });
 listen('error', (e) => { $('error').textContent = e.payload; $('error').hidden = false; });
 
@@ -176,6 +192,101 @@ function termRow(t = { term: '', sounds_like: [] }) {
   $('terms').appendChild(row);
 }
 $('add-term').onclick = () => termRow();
+
+// ---- hotkey access (Wayland) ---------------------------------------------
+async function checkHotkeyAccess() {
+  try { $('hk-access').hidden = (await invoke('hotkey_access')) === 'ok'; } catch {}
+}
+$('hk-grant').onclick = async () => {
+  $('hk-grant').disabled = true;
+  $('error').hidden = true;
+  try {
+    await invoke('grant_hotkey_access');
+  } catch (e) {
+    $('error').textContent = String(e);
+    $('error').hidden = false;
+  }
+  $('hk-grant').disabled = false;
+  checkHotkeyAccess();
+};
+
+// ---- compare mode -------------------------------------------------------
+function cmpSide(d, fastest) {
+  const box = document.createElement('div');
+  box.className = 'cmp-side' + (fastest ? ' fastest' : '');
+  const h = document.createElement('div');
+  h.className = 'cmp-head';
+  h.textContent = d.label;
+  const t = document.createElement('div');
+  t.className = 'cmp-time';
+  t.textContent = d.error ? 'failed' : `${(d.ms / 1000).toFixed(2)} s`;
+  const body = document.createElement('div');
+  body.className = d.error ? 'cmp-text error-text' : 'cmp-text';
+  body.textContent = d.error || d.text || '(empty)';
+  box.append(h, t, body);
+  return box;
+}
+listen('compare', (e) => {
+  const { audio_s, similarity, local, cloud } = e.payload;
+  $('cmp-section').hidden = false;
+  const card = document.createElement('div');
+  card.className = 'cmp-card';
+  const ok = !local.error && !cloud.error;
+  const row = document.createElement('div');
+  row.className = 'cmp-row';
+  row.append(cmpSide(local, ok && local.ms <= cloud.ms), cmpSide(cloud, ok && cloud.ms < local.ms));
+  const foot = document.createElement('p');
+  foot.className = 'hint';
+  foot.textContent = `${audio_s} s of audio` +
+    (similarity != null ? ` · texts match ${Math.round(similarity * 100)}%` : '');
+  card.append(row, foot);
+  $('cmp-list').prepend(card);
+  while ($('cmp-list').children.length > 10) $('cmp-list').lastChild.remove();
+});
+
+// ---- microphone ---------------------------------------------------------
+async function loadMics() {
+  let devices = [];
+  try { devices = await invoke('list_input_devices'); } catch {}
+  const saved = settings?.input_device || '';
+  // Keep a saved microphone selectable even while it is unplugged.
+  if (saved && !devices.some((d) => d.id === saved)) devices.push({ id: saved, label: `${saved} (not connected)` });
+  $('mic').replaceChildren(new Option('System default', ''), ...devices.map((d) => new Option(d.label, d.id)));
+  $('mic').value = saved;
+}
+
+// ---- speed test ---------------------------------------------------------
+$('tune').onclick = async () => {
+  const log = $('tune-log');
+  log.replaceChildren();
+  log.hidden = false;
+  $('tune').disabled = true;
+  $('error').hidden = true;
+  try {
+    const r = await invoke('tune_speed');
+    const li = document.createElement('li');
+    li.textContent = `Fastest: ${r.best} (${(Math.min(...r.trials.filter((t) => t.similar).map((t) => t.ms)) / 1000).toFixed(2)} s). Applied.`;
+    li.style.fontWeight = '600';
+    log.append(li);
+    settings = await invoke('get_settings');
+    render();
+  } catch (e) {
+    $('error').textContent = String(e);
+    $('error').hidden = false;
+  }
+  $('tune').disabled = false;
+};
+listen('tune', (e) => {
+  const li = document.createElement('li');
+  li.textContent = e.payload;
+  $('tune-log').append(li);
+});
+listen('tune_trial', (e) => {
+  const t = e.payload;
+  const li = document.createElement('li');
+  li.textContent = `${t.label}: ${(t.ms / 1000).toFixed(2)} s${t.similar ? '' : ' (text differs, skipped)'}`;
+  $('tune-log').append(li);
+});
 
 // ---- hotkey capture -----------------------------------------------------
 const isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
@@ -216,6 +327,9 @@ function combo(e) {
   }
   if (e.altKey) mods.push('Alt');
   if (e.shiftKey) mods.push('Shift');
+  // Function keys work on their own, which is handy for hold-to-talk: no
+  // modifier is held down while text is typed into the focused app.
+  if (!mods.length && /^F([1-9]|1\d|2[0-4])$/.test(e.code)) return e.code;
   return mods.length ? [...mods, e.code].join('+') : null;
 }
 document.querySelectorAll('.hotkey').forEach((el) => {
@@ -281,6 +395,15 @@ function render() {
   setHotkey($('hk-toggle'), settings.hotkeys.toggle);
   setHotkey($('hk-paste'), settings.hotkeys.paste_last);
   $('auto-paste').checked = settings.auto_paste;
+  $('compare-mode').checked = !!settings.compare_mode;
+  $('trim-silence').checked = settings.trim_silence !== false;
+  $('voice-commands').checked = settings.voice_commands !== false;
+  $('streaming').checked = settings.streaming !== false;
+  $('typing-wpm').value = settings.typing_wpm || 40;
+  if (!$('tab-usage').hidden) renderUsage();
+  $('mic').value = settings.input_device || '';
+  $('use-gpu').checked = settings.use_gpu !== false;
+  $('overlay-position').value = settings.overlay_position || 'top';
   $('terms').replaceChildren();
   settings.vocabulary.forEach(termRow);
   if (!settings.vocabulary.length) termRow();
@@ -302,6 +425,14 @@ function collect() {
     vocabulary,
     hotkeys: { hold: $('hk-hold').dataset.value, toggle: $('hk-toggle').dataset.value, paste_last: $('hk-paste').dataset.value },
     auto_paste: $('auto-paste').checked,
+    compare_mode: $('compare-mode').checked,
+    trim_silence: $('trim-silence').checked,
+    voice_commands: $('voice-commands').checked,
+    streaming: $('streaming').checked,
+    typing_wpm: Math.max(5, Number($('typing-wpm').value) || 40),
+    input_device: $('mic').value,
+    use_gpu: $('use-gpu').checked,
+    overlay_position: $('overlay-position').value,
   };
 }
 
@@ -328,10 +459,13 @@ async function save() {
 }
 document.querySelector('main').addEventListener('input', scheduleSave);
 document.querySelector('main').addEventListener('change', scheduleSave);
+$('typing-wpm').addEventListener('input', () => { if (usage) renderUsage(); });
 
 (async () => {
   settings = await invoke('get_settings');
+  await loadMics();
   render();
+  checkHotkeyAccess();
   await refreshModels();
   $('last').value = await invoke('get_last');
   usage = await invoke('get_usage');

@@ -39,10 +39,26 @@ cargo tauri ios init && cargo tauri ios dev
 cargo tauri android init && cargo tauri android dev
 ```
 
+## GPU acceleration
+
+Local transcription runs on the GPU by default (setting "Use the GPU when available"), and falls back to the CPU if none is usable.
+
+The GPU backend is part of every build (also plain `cargo run`), so there is nothing to enable:
+
+| Platform | Backend | Build requirements |
+| --- | --- | --- |
+| macOS, Apple Silicon | Metal | none |
+| Windows / Linux, AMD + NVIDIA + Intel | Vulkan | Vulkan SDK (headers and `glslc`); Arch: `vulkan-headers shaderc` |
+
+Optional vendor backends instead of Vulkan: `cuda` (NVIDIA, needs the CUDA toolkit) or `hip` (AMD, needs ROCm and `AMDGPU_TARGETS=gfx1030`, or your card's id from `rocminfo`). They are added on top of Vulkan.
+
+The release installers for Windows and Linux are built with Vulkan, so they need a Vulkan driver, which ships with the normal AMD/NVIDIA/Intel GPU drivers.
+
 ## Platform notes
 
 - **macOS**: grant Microphone and Accessibility (needed to simulate Cmd+V) permission.
-- **Linux**: global hotkeys and simulated paste work on X11. Wayland restricts both; copy-from-clipboard still works.
+- **Linux (X11)**: global hotkeys and simulated paste work out of the box.
+- **Linux (Wayland, e.g. Hyprland)**: everything is built in, nothing to install. Voxly reads the keyboards for its global hotkeys; on first use, Settings shows "Enable global hotkeys", which installs a small udev rule after a one-time administrator password prompt (no group change, no re-login). The clipboard and Ctrl+V paste use the Wayland protocols directly (Ctrl+Shift+V in terminals on Hyprland); on compositors that refuse simulated keys, such as GNOME, `wl-copy` and `wtype`/`ydotool` are used if installed, otherwise paste manually. Optionally, `voxly start|stop|toggle|paste-last|show` controls the running app from compositor binds. Wayland compositors ignore window positions, so to keep the overlay pill from stealing focus on Hyprland add `windowrule = no_focus on, match:title ^Voxly overlay$`.
 - **iOS / Android**: no global hotkeys or system-wide paste from a regular app. You record in the app and the result goes to the clipboard. A system keyboard (IME) is the route to true system-wide dictation and is not built yet.
 
 ## License
