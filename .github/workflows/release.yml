@@ -1,9 +1,11 @@
 name: Release
 
-# Push a tag like v0.1.0 to build installers for all desktop platforms and
-# publish them as a GitHub release.
+# Every push to main reads the version in Cargo.toml. If no v<version> tag exists
+# yet, it creates that tag and builds installers for all desktop platforms into a
+# GitHub release. Pushing a v* tag by hand also builds. Bump the version to release.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -11,7 +13,35 @@ permissions:
   contents: write
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      release: ${{ steps.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tag="v$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "$tag already released, nothing to do"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            git tag "$tag" && git push origin "$tag"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: version
+    if: needs.version.outputs.release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -47,15 +77,15 @@ jobs:
             libasound2-dev libxdo-dev libclang-dev cmake \
             libgtk-layer-shell-dev libvulkan-dev
 
-      # Headers and the shader compiler whisper.cpp needs for its Vulkan
-      # backend. Sets VULKAN_SDK for the build.
+      # Official Vulkan SDK, which includes glslc (whisper.cpp needs it for Vulkan). Sets VULKAN_SDK.
+      # The setup-vulkan-sdk action builds from source and no longer provides glslc.
       - name: Vulkan SDK
         if: runner.os != 'macOS'
-        uses: humbletim/setup-vulkan-sdk@v1.2.1
+        uses: jakoch/install-vulkan-sdk-action@v1.2.5
         with:
-          vulkan-query-version: latest
-          vulkan-components: Vulkan-Headers, Vulkan-Loader, SPIRV-Tools, glslc
-          vulkan-use-cache: true
+          vulkan_version: 1.4.309.0
+          install_runtime: true
+          cache: true
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -76,8 +106,8 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: src-tauri
-          tagName: ${{ github.ref_name }}
-          releaseName: Voxly ${{ github.ref_name }}
+          tagName: ${{ needs.version.outputs.tag }}
+          releaseName: Voxly ${{ needs.version.outputs.tag }}
           releaseBody: "Download the installer for your system below."
           releaseDraft: false
           args: ${{ matrix.args }}
